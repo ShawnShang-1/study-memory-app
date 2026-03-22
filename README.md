@@ -1,17 +1,58 @@
-# study_memory_app
+# StudyMemory
 
-A new Flutter project.
+StudyMemory 是一个用于考研复习的个人知识点复习助手（Flutter + SQLite），面向日常学习场景设计。
 
-## Getting Started
+## 功能简介
 
-This project is a starting point for a Flutter application.
+- 🎯 **复习目标设置**：设置科目/知识域的复习目标
+- ➕ **知识点录入**：快速添加待记忆条目（题目、概念、难点）
+- 📚 **今日复习**：按计划展示今日待复习内容
+- 📅 **复习日历**：以日历形式回看与规划学习进度
+- 🧠 **记忆评估模型**：基于学习反馈与计划推进的学习节奏（初版）
+- 🏆 **进度与激励**：XP、等级、连续打卡（Streak）展示
 
-A few resources to get you started if this is your first Flutter project:
+## 技术栈
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+- Flutter（跨平台应用）
+- SQLite（本地数据存储）
+- Dart（应用逻辑）
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 目录结构
+
+- `lib/`
+  - `main.dart`：应用入口
+  - `pages/`：页面（首页/目标/新增/日历/统计）
+  - `models/`：数据模型
+  - `services/`：复习业务与数据库服务
+  - `database/`：本地数据库初始化与操作
+  - `widgets/`：通用 UI 组件
+
+## 快速开始
+
+### 1. 安装依赖
+
+```bash
+flutter pub get
+```
+
+### 2. 运行项目
+
+```bash
+flutter run
+```
+
+> 你可使用模拟器或真机进行运行。
+
+## 开发说明
+
+这是项目开发初期版本，当前完成度聚焦于核心学习链路。
+
+后续可迭代方向：
+- 复习评分系统（1~4 记忆程度）
+- 逾期任务红色提醒
+- 通知提醒
+- 统计分析页
+
+## 版权与合规
+
+项目包含 `copyright_materials/` 目录用于合规材料与版权声明说明。请按你的实际发布与复用要求完善。
