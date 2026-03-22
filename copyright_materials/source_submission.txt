@@ -1,0 +1,2355 @@
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/app.dart
+// ============================================================================
+import 'package:flutter/material.dart';
+import 'pages/home_page.dart';
+
+class StudyMemoryApp extends StatelessWidget {
+  const StudyMemoryApp({super.key});
+  @override
+  Widget build(BuildContext context) {
+    const seedColor = Color(0xFF6FCF97);
+    return MaterialApp(
+      title: 'SMemory',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: seedColor,
+          primary: seedColor,
+          secondary: const Color(0xFF56CCF2),
+          surface: Colors.white,
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
+        appBarTheme: const AppBarTheme(
+          centerTitle: false,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+        ),
+        cardTheme: CardThemeData(
+          elevation: 0,
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          margin: EdgeInsets.zero,
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: seedColor),
+          ),
+        ),
+      ),
+      home: const HomePage(),
+    );
+  }
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/database/app_database.dart
+// ============================================================================
+import 'dart:async';
+
+import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
+
+import '../models/study_models.dart';
+
+class AppDatabaseSnapshot {
+  const AppDatabaseSnapshot({
+    required this.goal,
+    required this.knowledgeItems,
+    required this.reviewSchedules,
+    required this.reviewRecords,
+    required this.totalXp,
+    required this.streakDays,
+    required this.todayCompletedTasks,
+    required this.lastStudyDate,
+    required this.dailyCounterDate,
+    required this.allTasksBonusDate,
+  });
+
+  final UserGoal? goal;
+  final List<KnowledgeItem> knowledgeItems;
+  final List<ReviewSchedule> reviewSchedules;
+  final List<ReviewRecord> reviewRecords;
+  final int totalXp;
+  final int streakDays;
+  final int todayCompletedTasks;
+  final DateTime? lastStudyDate;
+  final DateTime? dailyCounterDate;
+  final DateTime? allTasksBonusDate;
+}
+
+class AppDatabase {
+  AppDatabase._();
+
+  static final AppDatabase instance = AppDatabase._();
+
+  static const String databaseName = 'study_memory.db';
+  static const int databaseVersion = 1;
+
+  Database? _database;
+
+  Future<Database> get database async {
+    if (_database != null) {
+      return _database!;
+    }
+
+    final String databasesPath = await getDatabasesPath();
+    final String path = p.join(databasesPath, databaseName);
+    _database = await openDatabase(
+      path,
+      version: databaseVersion,
+      onCreate: (Database db, int version) async {
+        await _createTables(db);
+      },
+    );
+    return _database!;
+  }
+
+  Future<void> _createTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE user_goal (
+        id INTEGER PRIMARY KEY,
+        goal_text TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE knowledge (
+        id INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        note TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_reviewed_at TEXT,
+        next_review_at TEXT,
+        active_interval_days INTEGER
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE review_schedule (
+        id INTEGER PRIMARY KEY,
+        knowledge_id INTEGER NOT NULL,
+        due_at TEXT NOT NULL,
+        interval_days INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        FOREIGN KEY (knowledge_id) REFERENCES knowledge(id)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE review_record (
+        id INTEGER PRIMARY KEY,
+        knowledge_id INTEGER NOT NULL,
+        schedule_id INTEGER NOT NULL,
+        memory_level INTEGER NOT NULL,
+        reviewed_at TEXT NOT NULL,
+        next_review_at TEXT NOT NULL,
+        next_interval_days INTEGER NOT NULL,
+        FOREIGN KEY (knowledge_id) REFERENCES knowledge(id),
+        FOREIGN KEY (schedule_id) REFERENCES review_schedule(id)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE user_stats (
+        id INTEGER PRIMARY KEY,
+        total_xp INTEGER NOT NULL,
+        streak_days INTEGER NOT NULL,
+        today_completed_tasks INTEGER NOT NULL,
+        last_study_date TEXT,
+        daily_counter_date TEXT,
+        all_tasks_bonus_date TEXT
+      )
+    ''');
+  }
+
+  Future<AppDatabaseSnapshot> loadSnapshot() async {
+    final Database db = await database;
+
+    final List<Map<String, Object?>> goalRows = await db.query(
+      'user_goal',
+      limit: 1,
+    );
+    final List<Map<String, Object?>> knowledgeRows = await db.query(
+      'knowledge',
+    );
+    final List<Map<String, Object?>> scheduleRows = await db.query(
+      'review_schedule',
+    );
+    final List<Map<String, Object?>> recordRows = await db.query(
+      'review_record',
+    );
+    final List<Map<String, Object?>> statsRows = await db.query(
+      'user_stats',
+      limit: 1,
+    );
+
+    final UserGoal? goal = goalRows.isEmpty
+        ? null
+        : UserGoal(
+            text: goalRows.first['goal_text']! as String,
+            updatedAt: DateTime.parse(goalRows.first['updated_at']! as String),
+          );
+
+    final List<KnowledgeItem> knowledgeItems = knowledgeRows.map((
+      Map<String, Object?> row,
+    ) {
+      return KnowledgeItem(
+        id: row['id']! as int,
+        title: row['title']! as String,
+        note: row['note']! as String,
+        subject: row['subject']! as String,
+        createdAt: DateTime.parse(row['created_at']! as String),
+        lastReviewedAt: _parseNullableDate(row['last_reviewed_at']),
+        nextReviewAt: _parseNullableDate(row['next_review_at']),
+        activeIntervalDays: row['active_interval_days'] as int?,
+      );
+    }).toList();
+
+    final List<ReviewSchedule> reviewSchedules = scheduleRows.map((
+      Map<String, Object?> row,
+    ) {
+      return ReviewSchedule(
+        id: row['id']! as int,
+        knowledgeId: row['knowledge_id']! as int,
+        dueAt: DateTime.parse(row['due_at']! as String),
+        intervalDays: row['interval_days']! as int,
+        status: (row['status']! as String) == 'completed'
+            ? ReviewTaskStatus.completed
+            : ReviewTaskStatus.pending,
+        createdAt: DateTime.parse(row['created_at']! as String),
+        completedAt: _parseNullableDate(row['completed_at']),
+      );
+    }).toList();
+
+    final List<ReviewRecord> reviewRecords = recordRows.map((
+      Map<String, Object?> row,
+    ) {
+      final int score = row['memory_level']! as int;
+      return ReviewRecord(
+        id: row['id']! as int,
+        knowledgeId: row['knowledge_id']! as int,
+        scheduleId: row['schedule_id']! as int,
+        level: MemoryLevel.values.firstWhere(
+          (MemoryLevel level) => level.score == score,
+        ),
+        reviewedAt: DateTime.parse(row['reviewed_at']! as String),
+        nextReviewAt: DateTime.parse(row['next_review_at']! as String),
+        nextIntervalDays: row['next_interval_days']! as int,
+      );
+    }).toList();
+
+    final Map<String, Object?>? stats = statsRows.isEmpty
+        ? null
+        : statsRows.first;
+
+    return AppDatabaseSnapshot(
+      goal: goal,
+      knowledgeItems: knowledgeItems,
+      reviewSchedules: reviewSchedules,
+      reviewRecords: reviewRecords,
+      totalXp: (stats?['total_xp'] as int?) ?? 0,
+      streakDays: (stats?['streak_days'] as int?) ?? 0,
+      todayCompletedTasks: (stats?['today_completed_tasks'] as int?) ?? 0,
+      lastStudyDate: _parseNullableDate(stats?['last_study_date']),
+      dailyCounterDate: _parseNullableDate(stats?['daily_counter_date']),
+      allTasksBonusDate: _parseNullableDate(stats?['all_tasks_bonus_date']),
+    );
+  }
+
+  Future<void> saveSnapshot({
+    required UserGoal goal,
+    required List<KnowledgeItem> knowledgeItems,
+    required List<ReviewSchedule> reviewSchedules,
+    required List<ReviewRecord> reviewRecords,
+    required int totalXp,
+    required int streakDays,
+    required int todayCompletedTasks,
+    required DateTime? lastStudyDate,
+    required DateTime? dailyCounterDate,
+    required DateTime? allTasksBonusDate,
+  }) async {
+    final Database db = await database;
+
+    await db.transaction((Transaction txn) async {
+      await txn.delete('user_goal');
+      await txn.delete('knowledge');
+      await txn.delete('review_schedule');
+      await txn.delete('review_record');
+      await txn.delete('user_stats');
+
+      await txn.insert('user_goal', <String, Object?>{
+        'id': 1,
+        'goal_text': goal.text,
+        'updated_at': goal.updatedAt.toIso8601String(),
+      });
+
+      for (final KnowledgeItem item in knowledgeItems) {
+        await txn.insert('knowledge', <String, Object?>{
+          'id': item.id,
+          'title': item.title,
+          'note': item.note,
+          'subject': item.subject,
+          'created_at': item.createdAt.toIso8601String(),
+          'last_reviewed_at': item.lastReviewedAt?.toIso8601String(),
+          'next_review_at': item.nextReviewAt?.toIso8601String(),
+          'active_interval_days': item.activeIntervalDays,
+        });
+      }
+
+      for (final ReviewSchedule schedule in reviewSchedules) {
+        await txn.insert('review_schedule', <String, Object?>{
+          'id': schedule.id,
+          'knowledge_id': schedule.knowledgeId,
+          'due_at': schedule.dueAt.toIso8601String(),
+          'interval_days': schedule.intervalDays,
+          'status': schedule.status.name,
+          'created_at': schedule.createdAt.toIso8601String(),
+          'completed_at': schedule.completedAt?.toIso8601String(),
+        });
+      }
+
+      for (final ReviewRecord record in reviewRecords) {
+        await txn.insert('review_record', <String, Object?>{
+          'id': record.id,
+          'knowledge_id': record.knowledgeId,
+          'schedule_id': record.scheduleId,
+          'memory_level': record.level.score,
+          'reviewed_at': record.reviewedAt.toIso8601String(),
+          'next_review_at': record.nextReviewAt.toIso8601String(),
+          'next_interval_days': record.nextIntervalDays,
+        });
+      }
+
+      await txn.insert('user_stats', <String, Object?>{
+        'id': 1,
+        'total_xp': totalXp,
+        'streak_days': streakDays,
+        'today_completed_tasks': todayCompletedTasks,
+        'last_study_date': lastStudyDate?.toIso8601String(),
+        'daily_counter_date': dailyCounterDate?.toIso8601String(),
+        'all_tasks_bonus_date': allTasksBonusDate?.toIso8601String(),
+      });
+    });
+  }
+
+  DateTime? _parseNullableDate(Object? value) {
+    if (value == null) {
+      return null;
+    }
+    return DateTime.parse(value as String);
+  }
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/main.dart
+// ============================================================================
+import 'package:flutter/widgets.dart';
+
+import 'app.dart';
+import 'services/study_service.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await StudyController.instance.initialize();
+  runApp(const StudyMemoryApp());
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/models/study_models.dart
+// ============================================================================
+import 'package:flutter/foundation.dart';
+
+enum ReviewTaskStatus { pending, completed }
+
+enum MemoryLevel {
+  forgot(1, '1 完全不会', 1),
+  vague(2, '2 有点印象', 3),
+  good(3, '3 基本掌握', 7),
+  mastered(4, '4 熟练', 30);
+
+  const MemoryLevel(this.score, this.label, this.nextIntervalDays);
+
+  final int score;
+  final String label;
+  final int nextIntervalDays;
+}
+
+@immutable
+class UserGoal {
+  const UserGoal({required this.text, required this.updatedAt});
+
+  final String text;
+  final DateTime updatedAt;
+
+  UserGoal copyWith({String? text, DateTime? updatedAt}) {
+    return UserGoal(
+      text: text ?? this.text,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+}
+
+@immutable
+class KnowledgeItem {
+  const KnowledgeItem({
+    required this.id,
+    required this.title,
+    required this.note,
+    required this.subject,
+    required this.createdAt,
+    this.lastReviewedAt,
+    this.nextReviewAt,
+    this.activeIntervalDays,
+  });
+
+  final int id;
+  final String title;
+  final String note;
+  final String subject;
+  final DateTime createdAt;
+  final DateTime? lastReviewedAt;
+  final DateTime? nextReviewAt;
+  final int? activeIntervalDays;
+
+  KnowledgeItem copyWith({
+    String? title,
+    String? note,
+    String? subject,
+    DateTime? createdAt,
+    DateTime? lastReviewedAt,
+    DateTime? nextReviewAt,
+    int? activeIntervalDays,
+  }) {
+    return KnowledgeItem(
+      id: id,
+      title: title ?? this.title,
+      note: note ?? this.note,
+      subject: subject ?? this.subject,
+      createdAt: createdAt ?? this.createdAt,
+      lastReviewedAt: lastReviewedAt ?? this.lastReviewedAt,
+      nextReviewAt: nextReviewAt ?? this.nextReviewAt,
+      activeIntervalDays: activeIntervalDays ?? this.activeIntervalDays,
+    );
+  }
+}
+
+@immutable
+class ReviewSchedule {
+  const ReviewSchedule({
+    required this.id,
+    required this.knowledgeId,
+    required this.dueAt,
+    required this.intervalDays,
+    required this.status,
+    required this.createdAt,
+    this.completedAt,
+  });
+
+  final int id;
+  final int knowledgeId;
+  final DateTime dueAt;
+  final int intervalDays;
+  final ReviewTaskStatus status;
+  final DateTime createdAt;
+  final DateTime? completedAt;
+
+  bool get isPending => status == ReviewTaskStatus.pending;
+
+  ReviewSchedule copyWith({
+    DateTime? dueAt,
+    int? intervalDays,
+    ReviewTaskStatus? status,
+    DateTime? createdAt,
+    DateTime? completedAt,
+  }) {
+    return ReviewSchedule(
+      id: id,
+      knowledgeId: knowledgeId,
+      dueAt: dueAt ?? this.dueAt,
+      intervalDays: intervalDays ?? this.intervalDays,
+      status: status ?? this.status,
+      createdAt: createdAt ?? this.createdAt,
+      completedAt: completedAt ?? this.completedAt,
+    );
+  }
+}
+
+@immutable
+class ReviewRecord {
+  const ReviewRecord({
+    required this.id,
+    required this.knowledgeId,
+    required this.scheduleId,
+    required this.level,
+    required this.reviewedAt,
+    required this.nextReviewAt,
+    required this.nextIntervalDays,
+  });
+
+  final int id;
+  final int knowledgeId;
+  final int scheduleId;
+  final MemoryLevel level;
+  final DateTime reviewedAt;
+  final DateTime nextReviewAt;
+  final int nextIntervalDays;
+}
+
+@immutable
+class UserStats {
+  const UserStats({
+    required this.totalKnowledgeCount,
+    required this.totalCompletedReviews,
+    required this.todayReviewCount,
+    required this.overdueCount,
+    required this.upcomingCount,
+    required this.totalXp,
+    required this.currentLevel,
+    required this.xpInCurrentLevel,
+    required this.xpPerLevel,
+    required this.levelProgress,
+    required this.streakDays,
+    required this.todayCompletedTasks,
+    required this.allDueTasksCompleted,
+  });
+
+  final int totalKnowledgeCount;
+  final int totalCompletedReviews;
+  final int todayReviewCount;
+  final int overdueCount;
+  final int upcomingCount;
+  final int totalXp;
+  final int currentLevel;
+  final int xpInCurrentLevel;
+  final int xpPerLevel;
+  final double levelProgress;
+  final int streakDays;
+  final int todayCompletedTasks;
+  final bool allDueTasksCompleted;
+
+  int get xpToNextLevel => xpPerLevel - xpInCurrentLevel;
+}
+
+@immutable
+class ReviewTaskItem {
+  const ReviewTaskItem({
+    required this.knowledge,
+    required this.schedule,
+    required this.isOverdue,
+  });
+
+  final KnowledgeItem knowledge;
+  final ReviewSchedule schedule;
+  final bool isOverdue;
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/pages/add_page.dart
+// ============================================================================
+import 'package:flutter/material.dart';
+
+import '../services/study_service.dart';
+
+class AddPage extends StatefulWidget {
+  const AddPage({super.key});
+
+  @override
+  State<AddPage> createState() => _AddPageState();
+}
+
+class _AddPageState extends State<AddPage> {
+  final StudyController _controller = StudyController.instance;
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _noteController = TextEditingController();
+  String _selectedSubject = '数学';
+  bool _isSaving = false;
+
+  final List<String> _subjects = <String>['数学', '英语', '政治', '专业课'];
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('添加知识点')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '每新增一个知识点，系统都会自动生成后续复习计划。',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: '知识点标题',
+                hintText: '例如：函数极限未定式',
+              ),
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              initialValue: _selectedSubject,
+              decoration: const InputDecoration(labelText: '科目'),
+              items: _subjects
+                  .map(
+                    (String subject) => DropdownMenuItem<String>(
+                      value: subject,
+                      child: Text(subject),
+                    ),
+                  )
+                  .toList(),
+              onChanged: _isSaving
+                  ? null
+                  : (String? value) {
+                      if (value != null) {
+                        setState(() {
+                          _selectedSubject = value;
+                        });
+                      }
+                    },
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _noteController,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                labelText: '备注',
+                hintText: '记录公式、例题或记忆提示',
+              ),
+            ),
+            const SizedBox(height: 24),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(
+                  context,
+                ).colorScheme.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Text(
+                    '初始复习计划',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('${_controller.initialIntervals.join(' / ')} 天'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _isSaving ? null : _saveKnowledge,
+                child: _isSaving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('保存知识点'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveKnowledge() async {
+    final String title = _titleController.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请输入知识点标题。')));
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
+
+    await _controller.addKnowledge(
+      title: title,
+      note: _noteController.text,
+      subject: _selectedSubject,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pop();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('知识点已添加，复习计划已生成。')));
+  }
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/pages/calendar_page.dart
+// ============================================================================
+import 'package:flutter/material.dart';
+
+import '../models/study_models.dart';
+import '../services/study_service.dart';
+import '../widgets/section_card.dart';
+
+class CalendarPage extends StatelessWidget {
+  CalendarPage({super.key});
+
+  final StudyController _controller = StudyController.instance;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (BuildContext context, Widget? child) {
+        final List<ReviewTaskItem> upcomingTasks = _controller.upcomingTasks;
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: <Widget>[
+            Text(
+              '后续复习计划',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '这里展示今天之后的待复习任务安排。',
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: Colors.black54),
+            ),
+            const SizedBox(height: 20),
+            if (upcomingTasks.isEmpty)
+              const SectionCard(child: Text('目前还没有后续计划，添加知识点后会自动生成。'))
+            else
+              ...upcomingTasks.map(
+                (ReviewTaskItem item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: SectionCard(
+                    child: Row(
+                      children: <Widget>[
+                        Container(
+                          width: 52,
+                          height: 52,
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.secondary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            _controller.formatAbsoluteDate(item.schedule.dueAt),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                item.knowledge.title,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(item.knowledge.subject),
+                              const SizedBox(height: 4),
+                              Text('间隔：${item.schedule.intervalDays} 天'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/pages/goal_page.dart
+// ============================================================================
+import 'package:flutter/material.dart';
+
+import '../services/study_service.dart';
+
+class GoalPage extends StatefulWidget {
+  const GoalPage({super.key, this.initialGoal});
+
+  final String? initialGoal;
+
+  @override
+  State<GoalPage> createState() => _GoalPageState();
+}
+
+class _GoalPageState extends State<GoalPage> {
+  final StudyController _controller = StudyController.instance;
+  late final TextEditingController _textController;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _textController = TextEditingController(
+      text: widget.initialGoal ?? _controller.goal.text,
+    );
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('目标设置')),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '设置你的考研目标，方便你长期保持学习方向。',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _textController,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: '考研目标',
+                hintText: '例如：考上北京大学计算机研究生',
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _isSaving ? null : _saveGoal,
+                child: _isSaving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('保存目标'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveGoal() async {
+    setState(() {
+      _isSaving = true;
+    });
+
+    await _controller.updateGoal(_textController.text);
+
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pop();
+  }
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/pages/home_page.dart
+// ============================================================================
+import 'package:flutter/material.dart';
+
+import '../models/study_models.dart';
+import '../services/study_service.dart';
+import '../widgets/section_card.dart';
+import 'add_page.dart';
+import 'calendar_page.dart';
+import 'goal_page.dart';
+import 'stats_page.dart';
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  final StudyController _controller = StudyController.instance;
+  int _currentIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (BuildContext context, Widget? child) {
+        final List<Widget> tabs = <Widget>[
+          _DashboardTab(controller: _controller),
+          CalendarPage(),
+          StatsPage(),
+        ];
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('SMemory'),
+            actions: <Widget>[
+              IconButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          GoalPage(initialGoal: _controller.goal.text),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.flag_outlined),
+                tooltip: '编辑目标',
+              ),
+            ],
+          ),
+          body: SafeArea(
+            child: IndexedStack(index: _currentIndex, children: tabs),
+          ),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: () {
+              Navigator.of(
+                context,
+              ).push(MaterialPageRoute<void>(builder: (_) => const AddPage()));
+            },
+            icon: const Icon(Icons.add),
+            label: const Text('添加'),
+          ),
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: _currentIndex,
+            onDestinationSelected: (int index) {
+              setState(() {
+                _currentIndex = index;
+              });
+            },
+            destinations: const <NavigationDestination>[
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home),
+                label: '今天',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.calendar_month_outlined),
+                selectedIcon: Icon(Icons.calendar_month),
+                label: '计划',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.bar_chart_outlined),
+                selectedIcon: Icon(Icons.bar_chart),
+                label: '统计',
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DashboardTab extends StatelessWidget {
+  const _DashboardTab({required this.controller});
+
+  final StudyController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final UserStats stats = controller.stats;
+    final List<ReviewTaskItem> overdueTasks = controller.overdueTasks;
+    final List<ReviewTaskItem> todayTasks = controller.todayTasks;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 96),
+      children: <Widget>[
+        _HeroCard(stats: stats),
+        const SizedBox(height: 20),
+        _TaskSection(
+          title: '逾期任务',
+          subtitle: '建议先处理逾期内容，避免复习节奏继续延后。',
+          emptyLabel: '当前没有逾期任务。',
+          accentColor: const Color(0xFFEB5757),
+          tasks: overdueTasks,
+          controller: controller,
+        ),
+        const SizedBox(height: 20),
+        _TaskSection(
+          title: '今日复习',
+          subtitle: '下面是今天需要完成的复习任务。',
+          emptyLabel: '今天暂时没有待复习任务，可以先去添加知识点。',
+          accentColor: Theme.of(context).colorScheme.primary,
+          tasks: todayTasks,
+          controller: controller,
+        ),
+      ],
+    );
+  }
+}
+
+class _HeroCard extends StatelessWidget {
+  const _HeroCard({required this.stats});
+
+  final UserStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color primary = Theme.of(context).colorScheme.primary;
+    final Color secondary = Theme.of(context).colorScheme.secondary;
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: <Color>[
+            primary.withValues(alpha: 0.96),
+            secondary.withValues(alpha: 0.96),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: const <BoxShadow>[
+          BoxShadow(
+            color: Color(0x140F172A),
+            blurRadius: 28,
+            offset: Offset(0, 16),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            '今天',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: Colors.white.withValues(alpha: 0.85),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '今日复习概览',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '把注意力放在今天需要完成的任务上，目标可在右上角单独编辑。',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Colors.white.withValues(alpha: 0.88),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: <Widget>[
+              _GlassChip(
+                icon: Icons.stars_rounded,
+                label: '等级 ${stats.currentLevel}  ${stats.totalXp} 经验',
+              ),
+              _GlassChip(
+                icon: Icons.local_fire_department_rounded,
+                label: '连续 ${stats.streakDays} 天',
+              ),
+              _GlassChip(
+                icon: Icons.check_circle_rounded,
+                label: '今日完成 ${stats.todayCompletedTasks} 项',
+              ),
+              _GlassChip(
+                icon: Icons.today_outlined,
+                label: '待复习 ${stats.todayReviewCount} 项',
+              ),
+              _GlassChip(
+                icon: Icons.warning_amber_rounded,
+                label: '逾期 ${stats.overdueCount} 项',
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: stats.levelProgress,
+              minHeight: 10,
+              backgroundColor: Colors.white.withValues(alpha: 0.24),
+              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '距离下一级还差 ${stats.xpToNextLevel} 经验值',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Colors.white.withValues(alpha: 0.9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GlassChip extends StatelessWidget {
+  const _GlassChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(icon, size: 18, color: Colors.white),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskSection extends StatelessWidget {
+  const _TaskSection({
+    required this.title,
+    required this.subtitle,
+    required this.emptyLabel,
+    required this.accentColor,
+    required this.tasks,
+    required this.controller,
+  });
+
+  final String title;
+  final String subtitle;
+  final String emptyLabel;
+  final Color accentColor;
+  final List<ReviewTaskItem> tasks;
+  final StudyController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          title,
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          subtitle,
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: Colors.black54),
+        ),
+        const SizedBox(height: 12),
+        if (tasks.isEmpty)
+          SectionCard(child: Text(emptyLabel))
+        else
+          ...tasks.map(
+            (ReviewTaskItem task) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _TaskCard(
+                item: task,
+                accentColor: accentColor,
+                onComplete: () => _showReviewSheet(context, task),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _showReviewSheet(
+    BuildContext context,
+    ReviewTaskItem item,
+  ) async {
+    final MemoryLevel? level = await showModalBottomSheet<MemoryLevel>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: const Color(0xFFF9FBFC),
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  item.knowledge.title,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                const Text('请根据复习结果选择你的记忆程度。'),
+                const SizedBox(height: 16),
+                ...MemoryLevel.values.map(
+                  (MemoryLevel option) => Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      title: Text(option.label),
+                      subtitle: Text('下次复习：${option.nextIntervalDays}天后'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => Navigator.of(context).pop(option),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (level == null) {
+      return;
+    }
+
+    await controller.completeTask(scheduleId: item.schedule.id, level: level);
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${item.knowledge.title} 已完成复习，${controller.describeReviewRule(level)}。',
+          ),
+        ),
+      );
+    }
+  }
+}
+
+class _TaskCard extends StatelessWidget {
+  const _TaskCard({
+    required this.item,
+    required this.accentColor,
+    required this.onComplete,
+  });
+
+  final ReviewTaskItem item;
+  final Color accentColor;
+  final VoidCallback onComplete;
+
+  @override
+  Widget build(BuildContext context) {
+    final StudyController controller = StudyController.instance;
+
+    return SectionCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Container(
+            width: 10,
+            height: 90,
+            decoration: BoxDecoration(
+              color: accentColor,
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  item.knowledge.title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  item.knowledge.subject,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: Colors.black54),
+                ),
+                if (item.knowledge.note.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 6),
+                  Text(
+                    item.knowledge.note,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[
+                    _PillLabel(
+                      text: controller.formatDueLabel(item),
+                      color: accentColor,
+                    ),
+                    _PillLabel(
+                      text: '间隔 ${item.schedule.intervalDays} 天',
+                      color: Theme.of(context).colorScheme.secondary,
+                    ),
+                    FilledButton.tonal(
+                      onPressed: onComplete,
+                      child: const Text('去复习'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PillLabel extends StatelessWidget {
+  const _PillLabel({required this.text, required this.color});
+
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: color, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/pages/stats_page.dart
+// ============================================================================
+import 'package:flutter/material.dart';
+
+import '../models/study_models.dart';
+import '../services/study_service.dart';
+import '../widgets/section_card.dart';
+import '../widgets/stat_badge.dart';
+
+class StatsPage extends StatelessWidget {
+  StatsPage({super.key});
+
+  final StudyController _controller = StudyController.instance;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (BuildContext context, Widget? child) {
+        final UserStats stats = _controller.stats;
+        final Color primary = Theme.of(context).colorScheme.primary;
+        final Color secondary = Theme.of(context).colorScheme.secondary;
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: <Widget>[
+            _LevelHero(stats: stats, primary: primary, secondary: secondary),
+            const SizedBox(height: 20),
+            LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                final double tileWidth = (constraints.maxWidth - 12) / 2;
+                return Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: <Widget>[
+                    SizedBox(
+                      width: tileWidth,
+                      child: StatBadge(
+                        label: '连续学习',
+                        value: '${stats.streakDays} 天',
+                        color: primary,
+                        icon: Icons.local_fire_department_rounded,
+                        helper: '每天至少完成 1 个复习任务。',
+                      ),
+                    ),
+                    SizedBox(
+                      width: tileWidth,
+                      child: StatBadge(
+                        label: '今日完成',
+                        value: '${stats.todayCompletedTasks} 项',
+                        color: secondary,
+                        icon: Icons.check_circle_rounded,
+                        helper: '完成一次复习 +10 经验。',
+                      ),
+                    ),
+                    SizedBox(
+                      width: tileWidth,
+                      child: StatBadge(
+                        label: '总知识点',
+                        value: '${stats.totalKnowledgeCount}',
+                        color: const Color(0xFFE67E22),
+                        icon: Icons.auto_stories_rounded,
+                        helper: '新增知识点 +5 经验。',
+                      ),
+                    ),
+                    SizedBox(
+                      width: tileWidth,
+                      child: StatBadge(
+                        label: '全清奖励',
+                        value: stats.allDueTasksCompleted ? '+30 经验' : '未完成',
+                        color: const Color(0xFF2D9CDB),
+                        icon: Icons.workspace_premium_rounded,
+                        helper: '当天清空所有到期任务 +30 经验。',
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 20),
+            SectionCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: primary.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(Icons.bolt_rounded, color: primary),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        '经验规则',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  const _RuleRow(title: '新增知识点', reward: '+5 经验'),
+                  const SizedBox(height: 10),
+                  const _RuleRow(title: '完成一次复习', reward: '+10 经验'),
+                  const SizedBox(height: 10),
+                  const _RuleRow(title: '完成全部到期任务', reward: '+30 经验'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            SectionCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    '复习概览',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  _OverviewRow(
+                    label: '今日待复习',
+                    value: '${stats.todayReviewCount}',
+                  ),
+                  _OverviewRow(label: '逾期任务', value: '${stats.overdueCount}'),
+                  _OverviewRow(label: '未来计划', value: '${stats.upcomingCount}'),
+                  _OverviewRow(
+                    label: '累计完成复习',
+                    value: '${stats.totalCompletedReviews}',
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _LevelHero extends StatelessWidget {
+  const _LevelHero({
+    required this.stats,
+    required this.primary,
+    required this.secondary,
+  });
+
+  final UserStats stats;
+  final Color primary;
+  final Color secondary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: <Color>[primary, secondary],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: const <BoxShadow>[
+          BoxShadow(
+            color: Color(0x140F172A),
+            blurRadius: 28,
+            offset: Offset(0, 16),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: <Widget>[
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    '当前等级',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Colors.white.withValues(alpha: 0.82),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '等级 ${stats.currentLevel}',
+                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      '总经验',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.82),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${stats.totalXp} 经验',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 28),
+          Text(
+            '经验值进度',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: stats.levelProgress,
+              minHeight: 12,
+              backgroundColor: Colors.white.withValues(alpha: 0.26),
+              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '本级经验 ${stats.xpInCurrentLevel}/${stats.xpPerLevel}，距离等级 ${stats.currentLevel + 1} 还差 ${stats.xpToNextLevel} 经验',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RuleRow extends StatelessWidget {
+  const _RuleRow({required this.title, required this.reward});
+
+  final String title;
+  final String reward;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: <Widget>[
+        Text(
+          title,
+          style: Theme.of(
+            context,
+          ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF2FBF6),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            reward,
+            style: const TextStyle(
+              color: Color(0xFF219653),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _OverviewRow extends StatelessWidget {
+  const _OverviewRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: <Widget>[
+          Text(
+            label,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(color: const Color(0xFF4B5563)),
+          ),
+          Text(
+            value,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/services/study_service.dart
+// ============================================================================
+import 'dart:async';
+import 'dart:collection';
+
+import 'package:flutter/material.dart';
+
+import '../database/app_database.dart';
+import '../models/study_models.dart';
+
+class StudyController extends ChangeNotifier {
+  StudyController._();
+
+  static final StudyController instance = StudyController._();
+
+  final AppDatabase _database = AppDatabase.instance;
+  final List<int> _initialIntervals = <int>[1, 3, 7, 15, 30];
+  final List<KnowledgeItem> _knowledgeItems = <KnowledgeItem>[];
+  final List<ReviewSchedule> _reviewSchedules = <ReviewSchedule>[];
+  final List<ReviewRecord> _reviewRecords = <ReviewRecord>[];
+  final int _xpPerLevel = 100;
+
+  UserGoal _goal = UserGoal(text: '写下你的考研目标', updatedAt: DateTime.now());
+
+  int _nextKnowledgeId = 1;
+  int _nextScheduleId = 1;
+  int _nextRecordId = 1;
+  int _totalXp = 0;
+  int _streakDays = 0;
+  int _todayCompletedTasks = 0;
+  DateTime? _lastStudyDate;
+  DateTime? _dailyCounterDate;
+  DateTime? _allTasksBonusDate;
+  bool _initialized = false;
+
+  UserGoal get goal => _goal;
+  bool get isInitialized => _initialized;
+
+  Future<void> initialize() async {
+    if (_initialized) {
+      return;
+    }
+
+    final AppDatabaseSnapshot snapshot = await _database.loadSnapshot();
+
+    if (snapshot.goal != null) {
+      _goal = _normalizeGoal(snapshot.goal!);
+    }
+
+    _knowledgeItems
+      ..clear()
+      ..addAll(snapshot.knowledgeItems.map(_normalizeKnowledgeItem));
+    _reviewSchedules
+      ..clear()
+      ..addAll(snapshot.reviewSchedules);
+    _reviewRecords
+      ..clear()
+      ..addAll(snapshot.reviewRecords);
+
+    _totalXp = snapshot.totalXp;
+    _streakDays = snapshot.streakDays;
+    _todayCompletedTasks = snapshot.todayCompletedTasks;
+    _lastStudyDate = snapshot.lastStudyDate;
+    _dailyCounterDate = snapshot.dailyCounterDate;
+    _allTasksBonusDate = snapshot.allTasksBonusDate;
+
+    _nextKnowledgeId = _nextId(
+      _knowledgeItems.map((KnowledgeItem item) => item.id),
+    );
+    _nextScheduleId = _nextId(
+      _reviewSchedules.map((ReviewSchedule item) => item.id),
+    );
+    _nextRecordId = _nextId(_reviewRecords.map((ReviewRecord item) => item.id));
+
+    _syncDailyCounters(DateTime.now());
+    _initialized = true;
+    await _persist();
+    notifyListeners();
+  }
+
+  UnmodifiableListView<int> get initialIntervals =>
+      UnmodifiableListView<int>(_initialIntervals);
+
+  UnmodifiableListView<ReviewTaskItem> get todayTasks =>
+      UnmodifiableListView<ReviewTaskItem>(
+        _buildTaskItems(_todayPendingSchedules),
+      );
+
+  UnmodifiableListView<ReviewTaskItem> get overdueTasks =>
+      UnmodifiableListView<ReviewTaskItem>(
+        _buildTaskItems(_overduePendingSchedules),
+      );
+
+  UnmodifiableListView<ReviewTaskItem> get upcomingTasks =>
+      UnmodifiableListView<ReviewTaskItem>(
+        _buildTaskItems(_upcomingPendingSchedules),
+      );
+
+  UnmodifiableListView<KnowledgeItem> get knowledgeItems =>
+      UnmodifiableListView<KnowledgeItem>(
+        _knowledgeItems.toList()..sort(
+          (KnowledgeItem a, KnowledgeItem b) =>
+              b.createdAt.compareTo(a.createdAt),
+        ),
+      );
+
+  UnmodifiableListView<ReviewRecord> get reviewRecords =>
+      UnmodifiableListView<ReviewRecord>(
+        _reviewRecords.toList()..sort(
+          (ReviewRecord a, ReviewRecord b) =>
+              b.reviewedAt.compareTo(a.reviewedAt),
+        ),
+      );
+
+  UserStats get stats {
+    _syncDailyCounters(DateTime.now());
+
+    final int xpInCurrentLevel = _totalXp % _xpPerLevel;
+    final double levelProgress = xpInCurrentLevel / _xpPerLevel;
+
+    return UserStats(
+      totalKnowledgeCount: _knowledgeItems.length,
+      totalCompletedReviews: _reviewRecords.length,
+      todayReviewCount: _todayPendingSchedules.length,
+      overdueCount: _overduePendingSchedules.length,
+      upcomingCount: _upcomingPendingSchedules.length,
+      totalXp: _totalXp,
+      currentLevel: (_totalXp ~/ _xpPerLevel) + 1,
+      xpInCurrentLevel: xpInCurrentLevel,
+      xpPerLevel: _xpPerLevel,
+      levelProgress: levelProgress,
+      streakDays: _streakDays,
+      todayCompletedTasks: _todayCompletedTasks,
+      allDueTasksCompleted:
+          _dueNowPendingSchedules.isEmpty && _todayCompletedTasks > 0,
+    );
+  }
+
+  Future<void> updateGoal(String text) async {
+    final String trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+
+    _goal = _goal.copyWith(text: trimmed, updatedAt: DateTime.now());
+    notifyListeners();
+    await _persist();
+  }
+
+  Future<void> addKnowledge({
+    required String title,
+    required String note,
+    required String subject,
+  }) async {
+    final String trimmedTitle = title.trim();
+    if (trimmedTitle.isEmpty) {
+      return;
+    }
+
+    final DateTime now = DateTime.now();
+    _syncDailyCounters(now);
+
+    final KnowledgeItem item = KnowledgeItem(
+      id: _nextKnowledgeId++,
+      title: trimmedTitle,
+      note: note.trim(),
+      subject: subject.trim().isEmpty ? '通用' : subject.trim(),
+      createdAt: now,
+      nextReviewAt: _normalizedDueDate(now, _initialIntervals.first),
+      activeIntervalDays: _initialIntervals.first,
+    );
+
+    _knowledgeItems.add(item);
+    for (final int interval in _initialIntervals) {
+      _reviewSchedules.add(
+        ReviewSchedule(
+          id: _nextScheduleId++,
+          knowledgeId: item.id,
+          dueAt: _normalizedDueDate(now, interval),
+          intervalDays: interval,
+          status: ReviewTaskStatus.pending,
+          createdAt: now,
+        ),
+      );
+    }
+
+    _awardXp(5);
+    notifyListeners();
+    await _persist();
+  }
+
+  Future<void> completeTask({
+    required int scheduleId,
+    required MemoryLevel level,
+  }) async {
+    final int scheduleIndex = _reviewSchedules.indexWhere(
+      (ReviewSchedule schedule) =>
+          schedule.id == scheduleId && schedule.isPending,
+    );
+    if (scheduleIndex == -1) {
+      return;
+    }
+
+    final ReviewSchedule currentSchedule = _reviewSchedules[scheduleIndex];
+    final int knowledgeIndex = _knowledgeItems.indexWhere(
+      (KnowledgeItem item) => item.id == currentSchedule.knowledgeId,
+    );
+    if (knowledgeIndex == -1) {
+      return;
+    }
+
+    final DateTime now = DateTime.now();
+    _syncDailyCounters(now);
+
+    final int nextIntervalDays = level.nextIntervalDays;
+    final DateTime nextReviewAt = _normalizedDueDate(now, nextIntervalDays);
+
+    _reviewSchedules[scheduleIndex] = currentSchedule.copyWith(
+      status: ReviewTaskStatus.completed,
+      completedAt: now,
+    );
+
+    _reviewSchedules.removeWhere(
+      (ReviewSchedule schedule) =>
+          schedule.knowledgeId == currentSchedule.knowledgeId &&
+          schedule.id != currentSchedule.id &&
+          schedule.isPending,
+    );
+
+    _reviewSchedules.add(
+      ReviewSchedule(
+        id: _nextScheduleId++,
+        knowledgeId: currentSchedule.knowledgeId,
+        dueAt: nextReviewAt,
+        intervalDays: nextIntervalDays,
+        status: ReviewTaskStatus.pending,
+        createdAt: now,
+      ),
+    );
+
+    _reviewRecords.add(
+      ReviewRecord(
+        id: _nextRecordId++,
+        knowledgeId: currentSchedule.knowledgeId,
+        scheduleId: currentSchedule.id,
+        level: level,
+        reviewedAt: now,
+        nextReviewAt: nextReviewAt,
+        nextIntervalDays: nextIntervalDays,
+      ),
+    );
+
+    final KnowledgeItem currentKnowledge = _knowledgeItems[knowledgeIndex];
+    _knowledgeItems[knowledgeIndex] = currentKnowledge.copyWith(
+      lastReviewedAt: now,
+      nextReviewAt: nextReviewAt,
+      activeIntervalDays: nextIntervalDays,
+    );
+
+    _recordStudyCompletion(now);
+    _awardXp(10);
+
+    if (_shouldAwardAllTasksBonus(now)) {
+      _awardXp(30);
+      _allTasksBonusDate = _startOfDay(now);
+    }
+
+    notifyListeners();
+    await _persist();
+  }
+
+  KnowledgeItem? knowledgeFor(int knowledgeId) {
+    for (final KnowledgeItem item in _knowledgeItems) {
+      if (item.id == knowledgeId) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  String formatDueLabel(ReviewTaskItem item) {
+    if (item.isOverdue) {
+      final int overdueDays = _startOfDay(
+        DateTime.now(),
+      ).difference(_startOfDay(item.schedule.dueAt)).inDays;
+      return overdueDays <= 1 ? '逾期 1 天' : '逾期 $overdueDays 天';
+    }
+
+    return '今天';
+  }
+
+  String formatAbsoluteDate(DateTime date) {
+    return '${date.month}月${date.day}日';
+  }
+
+  String describeReviewRule(MemoryLevel level) {
+    return '${level.label}，下次复习：${level.nextIntervalDays}天后';
+  }
+
+  List<ReviewTaskItem> _buildTaskItems(List<ReviewSchedule> schedules) {
+    final List<ReviewTaskItem> items = <ReviewTaskItem>[];
+    for (final ReviewSchedule schedule in schedules) {
+      final KnowledgeItem? knowledge = knowledgeFor(schedule.knowledgeId);
+      if (knowledge != null) {
+        items.add(
+          ReviewTaskItem(
+            knowledge: knowledge,
+            schedule: schedule,
+            isOverdue: _isOverdue(schedule),
+          ),
+        );
+      }
+    }
+    return items;
+  }
+
+  List<ReviewSchedule> get _pendingSchedules {
+    final List<ReviewSchedule> pending =
+        _reviewSchedules
+            .where((ReviewSchedule schedule) => schedule.isPending)
+            .toList()
+          ..sort(
+            (ReviewSchedule a, ReviewSchedule b) => a.dueAt.compareTo(b.dueAt),
+          );
+    return pending;
+  }
+
+  List<ReviewSchedule> get _todayPendingSchedules => _pendingSchedules
+      .where((ReviewSchedule schedule) => _isToday(schedule.dueAt))
+      .toList();
+
+  List<ReviewSchedule> get _overduePendingSchedules => _pendingSchedules
+      .where((ReviewSchedule schedule) => _isOverdue(schedule))
+      .toList();
+
+  List<ReviewSchedule> get _upcomingPendingSchedules => _pendingSchedules
+      .where(
+        (ReviewSchedule schedule) =>
+            !_isOverdue(schedule) && !_isToday(schedule.dueAt),
+      )
+      .toList();
+
+  List<ReviewSchedule> get _dueNowPendingSchedules => _pendingSchedules
+      .where(
+        (ReviewSchedule schedule) =>
+            _isOverdue(schedule) || _isToday(schedule.dueAt),
+      )
+      .toList();
+
+  bool _isOverdue(ReviewSchedule schedule) {
+    return _startOfDay(schedule.dueAt).isBefore(_startOfDay(DateTime.now()));
+  }
+
+  bool _isToday(DateTime date) {
+    return DateUtils.isSameDay(date, DateTime.now());
+  }
+
+  DateTime _normalizedDueDate(DateTime base, int intervalDays) {
+    return _startOfDay(base).add(Duration(days: intervalDays));
+  }
+
+  DateTime _startOfDay(DateTime date) {
+    return DateTime(date.year, date.month, date.day);
+  }
+
+  void _awardXp(int amount) {
+    _totalXp += amount;
+  }
+
+  void _syncDailyCounters(DateTime now) {
+    final DateTime day = _startOfDay(now);
+    if (_dailyCounterDate == null ||
+        !DateUtils.isSameDay(_dailyCounterDate, day)) {
+      _dailyCounterDate = day;
+      _todayCompletedTasks = 0;
+      _allTasksBonusDate = null;
+    }
+  }
+
+  void _recordStudyCompletion(DateTime now) {
+    final DateTime today = _startOfDay(now);
+
+    if (_todayCompletedTasks == 0) {
+      if (_lastStudyDate == null) {
+        _streakDays = 1;
+      } else {
+        final int difference = today
+            .difference(_startOfDay(_lastStudyDate!))
+            .inDays;
+        if (difference <= 0) {
+          _streakDays = _streakDays == 0 ? 1 : _streakDays;
+        } else if (difference == 1) {
+          _streakDays += 1;
+        } else {
+          _streakDays = 1;
+        }
+      }
+    }
+
+    _todayCompletedTasks += 1;
+    _lastStudyDate = today;
+  }
+
+  bool _shouldAwardAllTasksBonus(DateTime now) {
+    return _todayCompletedTasks > 0 &&
+        _dueNowPendingSchedules.isEmpty &&
+        (_allTasksBonusDate == null ||
+            !DateUtils.isSameDay(_allTasksBonusDate, now));
+  }
+
+  int _nextId(Iterable<int> values) {
+    int maxValue = 0;
+    for (final int value in values) {
+      if (value > maxValue) {
+        maxValue = value;
+      }
+    }
+    return maxValue + 1;
+  }
+
+  Future<void> _persist() async {
+    if (!_initialized) {
+      return;
+    }
+
+    await _database.saveSnapshot(
+      goal: _goal,
+      knowledgeItems: _knowledgeItems,
+      reviewSchedules: _reviewSchedules,
+      reviewRecords: _reviewRecords,
+      totalXp: _totalXp,
+      streakDays: _streakDays,
+      todayCompletedTasks: _todayCompletedTasks,
+      lastStudyDate: _lastStudyDate,
+      dailyCounterDate: _dailyCounterDate,
+      allTasksBonusDate: _allTasksBonusDate,
+    );
+  }
+
+  UserGoal _normalizeGoal(UserGoal goal) {
+    if (goal.text == 'Set your exam goal' ||
+        goal.text == 'Get into PKU Computer Science') {
+      return goal.copyWith(text: '写下你的考研目标');
+    }
+    return goal;
+  }
+
+  KnowledgeItem _normalizeKnowledgeItem(KnowledgeItem item) {
+    return item.copyWith(
+      title: _translateLegacyTitle(item.title),
+      note: _translateLegacyNote(item.note),
+      subject: _translateLegacySubject(item.subject),
+    );
+  }
+
+  String _translateLegacySubject(String subject) {
+    switch (subject) {
+      case 'Math':
+        return '数学';
+      case 'English':
+        return '英语';
+      case 'Politics':
+        return '政治';
+      case 'Major':
+        return '专业课';
+      case 'General':
+        return '通用';
+      default:
+        return subject;
+    }
+  }
+
+  String _translateLegacyTitle(String title) {
+    switch (title) {
+      case 'Indeterminate forms of limits':
+        return '函数极限未定式';
+      case 'Long English sentence parsing':
+        return '英语长难句分析';
+      case 'Eigenvalues in linear algebra':
+        return '线性代数特征值';
+      default:
+        return title;
+    }
+  }
+
+  String _translateLegacyNote(String note) {
+    switch (note) {
+      case 'Review the common seven forms and one example for each.':
+        return '复习常见的七种未定式，并为每种准备一个例题。';
+      case 'Mark subject, predicate, clauses, and linking words.':
+        return '标出主谓、从句结构和连接词。';
+      default:
+        return note;
+    }
+  }
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/widgets/section_card.dart
+// ============================================================================
+import 'package:flutter/material.dart';
+
+class SectionCard extends StatelessWidget {
+  const SectionCard({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.all(20),
+    this.backgroundColor,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final Color? backgroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: backgroundColor,
+      surfaceTintColor: Colors.transparent,
+      shadowColor: const Color(0x140F172A),
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(padding: padding, child: child),
+    );
+  }
+}
+
+// ============================================================================
+// Software: StudyMemory考研复习助手软件
+// Version: V1.0
+// File: lib/widgets/stat_badge.dart
+// ============================================================================
+import 'package:flutter/material.dart';
+
+class StatBadge extends StatelessWidget {
+  const StatBadge({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.icon,
+    this.helper,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+  final IconData icon;
+  final String? helper;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const <BoxShadow>[
+          BoxShadow(
+            color: Color(0x0F0F172A),
+            blurRadius: 20,
+            offset: Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: color),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF1F2937),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFF4B5563),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (helper != null) ...<Widget>[
+            const SizedBox(height: 6),
+            Text(
+              helper!,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
